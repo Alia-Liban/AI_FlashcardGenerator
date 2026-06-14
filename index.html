@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Flashcard Generator</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+
+body {
+    background: linear-gradient(135deg, #ddc6c6, #e7d3c9);
+    color: #2b1b17;
+    font-family: Arial, sans-serif;
+}
+
+.container {
+    max-width: 900px;
+    margin-top: 50px;
+}
+
+/* CARD */
+.card {
+    background: #ddbea5;
+    color: #2b1b17;
+    border-radius: 15px;
+    margin-top: 15px;
+    padding: 15px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    transition: 0.2s;
+    border: none;
+}
+
+.card:hover {
+    transform: scale(1.02);
+}
+
+/* TEXTAREA */
+textarea {
+    min-height: 180px;
+    border-radius: 10px;
+    border: 1px solid #c9a89b;
+}
+
+/* ANSWER BOX */
+.answer-box {
+    background: #fff7f2;
+    color: #2b1b17;
+    border-radius: 10px;
+    padding: 12px;
+    margin-top: 10px;
+}
+
+/* DOCUMENT LABEL */
+.doc-name {
+    font-size: 13px;
+    opacity: 0.8;
+}
+
+/* HEADER */
+.header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+/* BUTTONS */
+.btn-primary { background-color: #b07c6b; border: none; }
+.btn-primary:hover { background-color: #9a6a5c; }
+
+.btn-success { background-color: #7c9a7c; border: none; }
+.btn-success:hover { background-color: #688568; }
+
+.btn-dark { background-color: #4b3b36; }
+.btn-danger { background-color: #b85c5c; }
+
+.badge { font-size: 14px; }
+
+button:disabled { opacity: 0.6; }
+/* mobile screens */
+@media (max-width: 768px) {
+
+    .container {
+        margin-top: 20px;
+        padding: 10px;
+    }
+
+    .card {
+        padding: 10px;
+    }
+
+    h2 {
+        font-size: 1.6rem;
+    }
+
+    textarea {
+        min-height: 140px;
+    }
+    
+}
+.answer {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+h6 {
+    line-height: 1.5;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="text-center mb-4">
+        <h2>AI Flashcard Generator</h2>
+        <p class="text-muted">Generate, study, and manage AI flashcards</p>
+    </div>
+
+    <!-- INPUT -->
+    <div class="card p-3">
+
+        <!-- LABEL ADDED -->
+        <label for="inputText" class="form-label">
+            Lecture Notes
+        </label>
+
+        <textarea
+            id="inputText"
+            class="form-control mb-2"
+            placeholder="Paste your lecture notes..."
+            title="Paste lecture notes to generate flashcards"></textarea>
+
+        <!-- LABEL ADDED -->
+        <label for="pdfFile" class="form-label">
+            Select PDF File
+        </label>
+
+        <input
+            type="file"
+            id="pdfFile"
+            class="form-control mb-2"
+            accept=".pdf"
+            title="Upload a PDF file to generate flashcards">
+
+        <div class="d-flex flex-column flex-md-row gap-2">
+
+           <button type="button" class="btn btn-primary w-100 w-md-50" onclick="generateText()">
+                Generate from Text
+            </button>
+
+            <button type="button" class="btn btn-success w-100 w-md-50" onclick="uploadPDF()">
+                Upload PDF
+            </button>
+
+        </div>
+
+    </div>
+
+    <!-- ACTIONS -->
+    <div class="card p-3 mt-3">
+
+        <div class="d-flex flex-column flex-md-row gap-2">
+
+            <button type="button" class="btn btn-dark w-50" onclick="loadHistory()">
+                Load Saved Flashcards
+            </button>
+
+            <button type="button" class="btn btn-danger w-50" onclick="clearFlashcards()">
+                Clear Saved Flashcards
+            </button>
+
+        </div>
+
+        <!-- NEW FEATURE: COPY ALL -->
+        <button type= "button" class="btn btn-outline-dark w-100 mt-2"
+            onclick="copyAllFlashcards()">
+            Copy All Flashcards
+        </button>
+
+        <div class="mt-2 d-flex justify-content-between align-items-center">
+
+            <span id="statsText" class="text-muted">
+                Total: 0 flashcards
+            </span>
+
+            <button type="button" class="btn btn-outline-secondary btn-sm"
+                onclick="toggleStudyMode()">
+                Study Mode
+            </button>
+
+        </div>
+
+    </div>
+
+    <!-- OUTPUT -->
+    <div id="output" class="mt-4"></div>
+
+</div>
+
+<script>
+
+const API = "http://127.0.0.1:8000";
+
+let currentCards = [];
+let studyMode = false;
+
+function showLoading(msg) {
+    document.getElementById("output").innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border"></div>
+            <p class="mt-3">${msg}</p>
+        </div>
+    `;
+}
+
+function render(cards) {
+
+    currentCards = cards || [];
+
+    document.getElementById("statsText").innerText =
+        `Total: ${currentCards.length} flashcards`;
+
+    if (!currentCards.length) {
+        document.getElementById("output").innerHTML =
+            `<div class="text-center text-muted">No flashcards yet</div>`;
+        return;
+    }
+
+    let html = "";
+
+    currentCards.forEach((c, i) => {
+
+        html += `
+        <div class="card p-3 mt-2">
+
+            <small class="text-muted">
+                📄 ${c.document || "Manual Input"}
+            </small>
+
+            <h6 class="mt-2">
+                Q${i + 1}: ${c.Q}
+            </h6>
+
+            <div class="mt-2 p-2 rounded" style="background:#fff7f2">
+
+                <strong>A:</strong>
+
+                <div class="answer" style="${studyMode ? 'display:none' : ''}">
+                    ${c.A}
+                </div>
+
+                <button class="btn btn-sm btn-outline-dark mt-2"
+                    onclick="toggleAnswer(this)">
+                    Show/Hide Answer
+                </button>
+
+                ${c.id ? `
+                <button class="btn btn-sm btn-danger mt-2 ms-2"
+                    onclick="deleteCard(${c.id})">
+                    Delete
+                </button>
+                ` : ''}
+
+            </div>
+
+        </div>`;
+    });
+
+    document.getElementById("output").innerHTML = html;
+}
+
+function toggleStudyMode() {
+    studyMode = !studyMode;
+    render(currentCards);
+}
+
+function toggleAnswer(btn) {
+    const ans = btn.parentElement.querySelector(".answer");
+    ans.style.display = ans.style.display === "none" ? "block" : "none";
+}
+
+async function copyAllFlashcards() {
+
+    if (!currentCards.length) {
+        alert("No flashcards available to copy.");
+        return;
+    }
+
+    let text = "";
+
+    currentCards.forEach((c, i) => {
+
+        text += `Q${i + 1}: ${c.Q}\n`;
+        text += `A: ${c.A}\n\n`;
+
+    });
+
+    try {
+
+        await navigator.clipboard.writeText(text);
+
+        alert("All flashcards copied to clipboard successfully!");
+
+    } catch (error) {
+
+        alert("Failed to copy flashcards.");
+
+    }
+}
+async function generateText() {
+
+    const text = document.getElementById("inputText").value.trim();
+
+    if (!text) {
+        alert("Please enter lecture notes.");
+        return;
+    }
+
+    showLoading("Generating...");
+
+    try {
+
+        const res = await fetch(`${API}/generate`, {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ text })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+            alert(data.error || "Backend error");
+            return;
+        }
+
+        render(data.flashcards || []);
+
+        alert(
+            `${(data.flashcards || []).length} flashcards generated successfully!`
+        );
+
+    } catch (error) {
+
+        alert("Cannot connect to server. Please make sure FastAPI is running.");
+
+    }
+}
+
+async function uploadPDF() {
+
+    const file = document.getElementById("pdfFile").files[0];
+
+    if (!file) {
+        alert("Please select a PDF file.");
+        return;
+    }
+
+    showLoading("Processing PDF...");
+
+    try {
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const res = await fetch(`${API}/upload-pdf`, {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || data.error) {
+            alert(data.error || "PDF processing failed");
+            return;
+        }
+
+        render(data.flashcards || []);
+
+        alert(
+            `${(data.flashcards || []).length} flashcards generated from PDF successfully!`
+        );
+
+    } catch (error) {
+
+        alert("Cannot connect to server. Please make sure FastAPI is running.");
+
+    }
+}
+async function loadHistory() {
+
+    showLoading("Loading...");
+
+    try {
+
+        const res = await fetch(`${API}/flashcards`);
+
+        const data = await res.json();
+
+        render(data);
+
+        alert(`${data.length} saved flashcards loaded successfully!`);
+
+    } catch (error) {
+
+        alert("Cannot connect to server. Please make sure FastAPI is running.");
+
+    }
+}
+async function clearFlashcards() {
+
+    const confirmDelete = confirm(
+        "Are you sure you want to delete all saved flashcards?"
+    );
+
+    if (!confirmDelete) {
+        return;
+    }
+
+    try {
+
+        const res = await fetch(`${API}/flashcards`, {
+            method: "DELETE"
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || data.success === false) {
+
+            alert(data.error || "Failed to clear flashcards.");
+
+            return;
+        }
+
+        currentCards = [];
+
+        render([]);
+
+        alert(
+            data.message ||
+            "All saved flashcards have been deleted."
+        );
+
+    } catch (error) {
+
+        alert(
+            "Cannot connect to server. Please make sure FastAPI is running."
+        );
+
+    }
+}
+async function deleteCard(id) {
+
+    if (!confirm("Delete this flashcard?")) {
+        return;
+    }
+
+    try {
+
+        const res = await fetch(
+            `${API}/flashcards/${id}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+        const data = await res.json();
+
+        alert(data.message);
+
+        loadHistory();
+
+    } catch {
+
+        alert("Failed to delete flashcard.");
+
+    }
+}
+
+</script>
+
+</body>
+</html> 
