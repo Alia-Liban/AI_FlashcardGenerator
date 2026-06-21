@@ -9,17 +9,17 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 import re
 import random
 
-app = FastAPI()
+app = FastAPI() #we use fastapi as our backend to communicate with the frontend
 
-# SQLITE DATABASE
+# SQLITE DATABASE LAYER
 
 DATABASE_URL = "sqlite:///./flashcards.db"
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False}
+    connect_args={"check_same_thread": False} #we check same thread to false beacuse fastapi operates in a loop
 )
-
+#configure session factory to establish scopes for database
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
@@ -28,7 +28,7 @@ SessionLocal = sessionmaker(
 
 Base = declarative_base()
 
-class Flashcard(Base):
+class Flashcard(Base):  #flashcard database column names
     __tablename__ = "flashcards"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -37,9 +37,9 @@ class Flashcard(Base):
     source_text = Column(Text)
     document_name = Column(Text)
 
-Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine) #automatically initiate tables upon applcation
 
-# CORS
+# CORS (cross origin resource sharing)
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,15 +49,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Iinput model
-
+# data validation model 
 class InputText(BaseModel):
     text: str
 
 generator = None
 
 
-#load model
+#load model on our terminal is the first step
 
 @app.on_event("startup")
 def load_model():
@@ -80,12 +79,12 @@ def load_model():
         print("MODEL LOAD ERROR:", e)
         generator = None
 
-# pdf extraction
+# pdf extraction and preprocessing 
 def extract_text_from_pdf(file):
     reader = PdfReader(file)
 
     text = ""
-    for page in reader.pages:
+    for page in reader.pages:  #skip corrupted layout pages
         try:
             content = page.extract_text()
             if content:
@@ -97,7 +96,7 @@ def extract_text_from_pdf(file):
 
 
 # clean text
-def clean_text(text):
+def clean_text(text):  #remove noise expressions
     text = re.sub(r'\b\d+\b', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\w\s.,!?()-]', '', text)
@@ -110,10 +109,10 @@ def extract_sentences(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
 
     cleaned = [s.strip() for s in sentences if 8 <= len(s.split()) <= 25]
-
+#sentences shorter than 8 words lack context for nlp and longer than 25 causes hallluciantions
     return cleaned
 
-# sentence seection
+# sentence section  (heurestic ranking alogirthm)
 
 def select_best_sentences(sentences):
 
@@ -122,7 +121,8 @@ def select_best_sentences(sentences):
 
     scored = []
 
-    keywords = [
+    keywords = [  #keywords chosen to give exam style questions
+        # with the important concepts from input
         
      "system", "architecture", "process", "model",
      "function", "role", "cause", "effect", "defined",
@@ -130,14 +130,15 @@ def select_best_sentences(sentences):
 ]
     
 
-    for s in sentences:
+    for s in sentences:    #add small length penalty bias
         score = sum(1 for k in keywords if k in s.lower())
         score += len(s.split()) * 0.03
         scored.append((score, s))
 
-    scored.sort(reverse=True, key=lambda x: x[0])
+    scored.sort(reverse=True, key=lambda x: x[0]) #sort down candiadates by descending score weight
 
-    top = sorted(scored, key=lambda x: x[0], reverse=True)[:20]
+    top = sorted(scored, key=lambda x: x[0], reverse=True)[:20] #extract top 20
+    #sort candidate sentences in order
     top = [s for _, s in top]
 
     random.shuffle(top)
@@ -149,13 +150,13 @@ def quality_check(question, answer):
     if not question or not answer:
         return False
 
-    if len(question.split()) < 6:
+    if len(question.split()) < 6: #filter out short questions
         return False
 
-    if len(answer.split()) < 3:
+    if len(answer.split()) < 3: #filter out useless o incomplete explanationstions
         return False
 
-    bad_words = [
+    bad_words = [  #block context that have textbook facts
         "exam",
         "test",
         "quiz",
@@ -166,7 +167,7 @@ def quality_check(question, answer):
         "lecture"
     ]
 
-    q_lower = question.lower()
+    q_lower = question.lower() #elimate non specific,vauge questions
     vague_phrases = [
     "the two models",
     "this model",
@@ -186,7 +187,7 @@ def quality_check(question, answer):
     if any(word in q_lower for word in bad_words):
         return False
 
-    bad_starts = [
+    bad_starts = [  #eliminate bad starts that generates questions that dont make sense
         
         "what is the purpose",
         "what is the purpose of this",
@@ -213,11 +214,14 @@ def quality_check(question, answer):
         return False
 
     return True
-def extract_answer(chunk):
-    sentences = chunk.split(". ")
-    sentences = [s.strip() for s in sentences if len(s.split()) > 4]
-    return ". ".join(sentences[:2])  # HARD LIMIT
-def question_too_similar(question, source):
+    #rule based answer extractions
+def extract_answer(chunk):  
+    sentences = chunk.split(". ")  #takes soource chunk text block and splits based on the periods
+    sentences = [s.strip() for s in sentences if len(s.split()) > 4] #loops throough split sentences and discards sentences less than 4 words
+    return ". ".join(sentences[:2])  # joins two sentences from the chunk w,th a full stop to make an answer
+
+def question_too_similar(question, source): #strictly makes sure that model does not 
+                                             #give questions that directly copy context sentence
 
     q_words = set(question.lower().split())
     s_words = set(source.lower().split())
@@ -227,16 +231,16 @@ def question_too_similar(question, source):
     return overlap > len(q_words) * 0.9
 
 
-# FLASHCARD generation
+# FLASHCARD generation with ai model and prompt engineering
 
 def generate_flashcard(sentence):
 
     if generator is None:
         return None
 
-    try:
+    try:   #our final prompt given to flan t5 ,our prompt engineering block
 
-        prompt = f"""
+        prompt = f"""   
 
 Generate ONE high-quality study question from the text.
 
@@ -259,23 +263,24 @@ QUESTION:
         result = generator(
             prompt,
             max_length=80,
-            do_sample=False,
+            do_sample=False, #deterministic greedy decoding to reduce hallucination anomalies
             
         )[0]["generated_text"]
 
         question = result.strip()
-        if question_too_similar(question, sentence):
+        if question_too_similar(question, sentence):  #generates actual flashcards questions
+                                             #not just sentence or paragraph showing as the question
            return None
         if len(set(question.lower().split()) & set(sentence.lower().split())) < 2:
-           return None
+           return None  #leaves out sentences who are too short to be made into questions
 
-        if len(question.split()) < 4:
+        if len(question.split()) < 4:  #really short questions get filtered out
             return None
         
-        if not quality_check(question, sentence):
+        if not quality_check(question, sentence): #quality check
           return None
 
-        bad_patterns = [
+        bad_patterns = [  #we want real Q&A not  anoother question format
             "true or false",
             "which of the following",
             
@@ -289,31 +294,31 @@ QUESTION:
             question += "?"
 
         return {
-            "Q": question,
-            "A": extract_answer(sentence)
+            "Q": question, #flan t5 gives question
+            "A": extract_answer(sentence) #answer is generated from sentence
         }
 
     except Exception as e:
-        print("GEN ERROR:", e)
+        print("GEN ERROR:", e)  #error exception
         return None
 
 # duplicates
 
-def is_duplicate(question, used_questions):
+def is_duplicate(question, used_questions): #this is implemented to check for similarity again
     q = set(question.lower().split())
 
-    for u in used_questions:
+    for u in used_questions:  
         u_set = set(u.lower().split())
 
-        if len(q & u_set) > 7: #similar words
-            return True
+        if len(q & u_set) > 7: # if more than 7 simialr words classify as duplicates
+         return True
 
     return False
 # MAIN PIPELINE
 
 def generate_flashcards(text, document_name="Manual Text"):
 
-    db = SessionLocal()
+    db = SessionLocal() #openes database
 
     sentences = extract_sentences(text)
 
@@ -441,5 +446,8 @@ def clear_flashcards():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+    
+    
+
     
     
